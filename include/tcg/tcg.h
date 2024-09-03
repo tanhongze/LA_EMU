@@ -531,7 +531,7 @@ struct TCGContext {
 
     TCGLabel *exitreq_label;
 
-#ifdef CONFIG_PLUGIN
+#if CONFIG_PLUGIN
     /*
      * We keep one plugin_tb struct per TCGContext. Note that on every TB
      * translation we clear but do not free its contents; this way we

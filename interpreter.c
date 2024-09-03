@@ -759,79 +759,80 @@ static uint64_t add_addr(int64_t base, int64_t disp) {
     return (uint64_t)(base + disp);
 }
 
-static int8_t ld_b(CPULoongArchState *env, uint64_t va) {
-    hwaddr ha = load_pa(env, va);
-#if defined(CONFIG_USER_ONLY)
-    return ram_ldb(ha);
-#else
-    return is_io(ha) ? do_io_ld(ha, 1) : ram_ldb(ha);
+static inline void do_ld(CPULoongArchState *env, uint64_t va, int data_size, uint64_t* data) {
+    int num_ha = 1;
+    hwaddr ha[2];
+    ha[0] = load_pa(env, va);
+    if (is_io(ha[0])) {
+#if !defined(CONFIG_USER_ONLY)
+        *data = do_io_ld(ha[0], data_size);
 #endif
+    } else {
+        if (is_aligned(va, data_size)) {
+            switch(data_size){
+                case 1:
+                    data[0] = ram_ldb(ha[0]);
+                    break;
+                case 2:
+                    data[0] = ram_ldh(ha[0]);
+                    break;
+                case 4:
+                    data[0] = ram_ldw(ha[0]);
+                    break;
+                case 8:
+                    data[0] = ram_ldd(ha[0]);
+                    break;
+                default:
+                    assert(data_size % 8 == 0);
+                    for(int i =0;i * 8 < data_size;i += 1){
+                        data[i] = ram_ldd(ha[0]);
+                    }
+                    break;
+            }
+        } else {
+            PERF_INC(COUNTER_INST_CROSS_PAGE_LOAD);
+            ha[1] = load_pa(env, va + data_size);
+            num_ha = 2;
+            hwaddr offset = ha[1] & 0xff;
+            hwaddr page2 = ha[1] - offset;
+            uint8_t* bytes = (uint8_t*)data;
+            int i = 0;
+            for(hwaddr addr = ha[0];addr < page2;addr += 1){
+                bytes[i++] = ram_ldb(addr);
+            }
+            for(hwaddr addr = page2;addr < ha[1];addr += 1){
+                bytes[i++] = ram_ldb(addr);
+            }
+            assert(i == data_size);
+        }
+    }
+#if CONFIG_PLUGIN >= 2
+    la_emu_plugin_record_memory(&env->action.memory[0],va,num_ha,ha,data_size);
+#endif
+}
+
+static int8_t ld_b(CPULoongArchState *env, uint64_t va) {
+    uint64_t data = 0;
+    do_ld(env, va, 1, &data);
+    return (int8_t)data;
 }
 
 static int16_t ld_h(CPULoongArchState *env, uint64_t va) {
-    uint64_t data;
-    const int data_size = 2;
-    hwaddr ha = load_pa(env, va);
-    if (is_io(ha)) {
-#if !defined(CONFIG_USER_ONLY)
-        data = do_io_ld(ha, data_size);
-#endif
-    } else {
-        if (is_aligned(va, data_size)) {
-            data = ram_ldh(ha);
-        } else {
-            PERF_INC(COUNTER_INST_CROSS_PAGE_LOAD);
-            data = 0;
-            for (int i = (data_size - 1); i >= 0; i--){
-                data |= (((uint16_t)ld_b(env, va + i) & 0xff) << (i * 8)) ;
-            }
-        }
-    }
-    return data;
+    uint64_t data = 0;
+    do_ld(env, va, 2, &data);
+    return (int16_t)data;
 }
 
 static int32_t ld_w(CPULoongArchState *env, uint64_t va) {
-    uint64_t data;
-    const int data_size = 4;
-    hwaddr ha = load_pa(env, va);
-    if (is_io(ha)) {
-#if !defined(CONFIG_USER_ONLY)
-        data = do_io_ld(ha, data_size);
-#endif
-    } else {
-        if (is_aligned(va, data_size)) {
-            data = ram_ldw(ha);
-        } else {
-            PERF_INC(COUNTER_INST_CROSS_PAGE_LOAD);
-            data = 0;
-            for (int i = (data_size - 1); i >= 0; i--){
-                data |= (((uint32_t)ld_b(env, va + i) & 0xff) << (i * 8)) ;
-            }
-        }
-    }
-    return data;
+    uint64_t data = 0;
+    do_ld(env, va, 4, &data);
+    return (int32_t)data;
 }
 
 static int64_t ld_d(CPULoongArchState *env, uint64_t va) {
-    uint64_t data;
-    const int data_size = 8;
-    hwaddr ha = load_pa(env, va);
-    if (is_io(ha)) {
-#if !defined(CONFIG_USER_ONLY)
-        data = do_io_ld(ha, data_size);
-#endif
-    } else {
-        if (is_aligned(va, data_size)) {
-            data = ram_ldd(ha);
-        } else {
-            PERF_INC(COUNTER_INST_CROSS_PAGE_LOAD);
-            data = 0;
-            for (int i = (data_size - 1); i >= 0; i--){
-                data |= (((uint64_t)ld_b(env, va + i) & 0xff) << (i * 8)) ;
-            }
-        }
-    }
-    return data;
+    uint64_t data = 0;
+    do_ld(env, va, 8, &data);
+    return (int64_t)data;
 }
 
 // static Int128 ld_128(CPULoongArchState *env, uint64_t va) {
@@ -4160,8 +4161,7 @@ static bool trans_vld(CPULoongArchState *env, arg_vld *restrict a) {
     CHECK_FPE(16);
     uint64_t va = add_addr(env->gpr[a->rj], a->imm);
     lsassert(!is_io(load_pa(env, va)));
-    env->fpr[a->vd].vreg.D[0] = ld_d(env, va);
-    env->fpr[a->vd].vreg.D[1] = ld_d(env, va + 8);
+    do_ld(env, va, 16, (uint64_t*)env->fpr[a->vd].vreg.D);
     env->pc += 4;
     return true;
 }
@@ -4178,8 +4178,7 @@ static bool trans_vldx(CPULoongArchState *env, arg_vldx *restrict a) {
     CHECK_FPE(16);
     uint64_t va = add_addr(env->gpr[a->rj], env->gpr[a->rk]);
     lsassert(!is_io(load_pa(env, va)));
-    env->fpr[a->vd].vreg.D[0] = ld_d(env, va);
-    env->fpr[a->vd].vreg.D[1] = ld_d(env, va + 8);
+    do_ld(env, va, 16, (uint64_t*)env->fpr[a->vd].vreg.D);
     env->pc += 4;
     return true;
 }
@@ -4436,10 +4435,8 @@ static bool trans_xvinsve0_w(CPULoongArchState *env, arg_xvinsve0_w *restrict a)
 }
 static bool trans_xvld(CPULoongArchState *env, arg_xvld *restrict a) {
     CHECK_FPE(32);
-    int32_t ele_cnt = 32 / 8;
-    for (int32_t i = 0; i < ele_cnt; i++) {
-        env->fpr[a->vd].vreg.D[i] = ld_d(env, add_addr(env->gpr[a->rj], a->imm + (i * 8)));
-    }
+    uint64_t va = add_addr(env->gpr[a->rj], a->imm);
+    do_ld(env, va, 32, (uint64_t*)env->fpr[a->vd].vreg.D);
     env->pc += 4;
     return true;
 }
@@ -4449,10 +4446,8 @@ static bool trans_xvldrepl_w(CPULoongArchState *env, arg_xvldrepl_w *restrict a)
 static bool trans_xvldrepl_d(CPULoongArchState *env, arg_xvldrepl_d *restrict a) {CHECK_FPE(32); int64_t data = ld_d(env, add_addr(env->gpr[a->rj], a->imm));for (size_t i = 0; i < 4; i++){env->fpr[a->vd].vreg.D[i] = data;}env->pc += 4;return true;}
 static bool trans_xvldx(CPULoongArchState *env, arg_xvldx *restrict a) {
     CHECK_FPE(32);
-    int32_t ele_cnt = 32 / 8;
-    for (int32_t i = 0; i < ele_cnt; i++) {
-        env->fpr[a->vd].vreg.D[i] = ld_d(env, add_addr(env->gpr[a->rj], env->gpr[a->rk] + (i * 8)));
-    }
+    uint64_t va = add_addr(env->gpr[a->rj], env->gpr[a->rk]);
+    do_ld(env, va, 32, (uint64_t*)env->fpr[a->vd].vreg.D);
     env->pc += 4;
     return true;
 }

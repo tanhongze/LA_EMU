@@ -1,5 +1,5 @@
 CC=gcc
-OPT_FLAG = -O2 -flto=auto
+OPT_FLAG = -O2
 ifeq (${DEBUG},1)
 	OPT_FLAG = -Og
 endif
@@ -31,7 +31,13 @@ endif
 
 ifeq (${PLUGIN},1)
 	LDFLAGS += -ldl
-	CFLAGS += -DCONFIG_PLUGIN
+	CFLAGS += -DCONFIG_PLUGIN=${PLUGIN}
+endif
+ifeq (${PLUGIN},2)
+	LDFLAGS += -ldl
+	CFLAGS += -DCONFIG_PLUGIN=${PLUGIN}
+	LDFLAGS += -L capstone -lcapstone
+	CFLAGS += -Icapstone/include
 endif
 
 arch := $(shell gcc -dumpmachine)
@@ -45,11 +51,11 @@ endif
 BUILD_DIR := ./build
 SRC_DIRS := ./
 
-USER_SOURCES := fpu_helper.c  host-utils.c  int128.c  interpreter.c  main.c  softfloat.c vec_helper.c tcg-runtime-gvec.c syscall.c ${GDB_SOURCES} debug_cli.c cpu.c checkpoint.c
+USER_SOURCES := fpu_helper.c  host-utils.c  int128.c  interpreter.c  main.c plugin.c softfloat.c vec_helper.c tcg-runtime-gvec.c syscall.c ${GDB_SOURCES} debug_cli.c cpu.c checkpoint.c
 USER_OBJS := $(addprefix $(BUILD_DIR)/, $(patsubst %.c,%_user.o,$(USER_SOURCES)))
 USER_DEPS := $(USER_OBJS:.o=.d)
 
-KERNEL_SOURCES := fpu_helper.c  host-utils.c  int128.c  interpreter.c  main.c  softfloat.c  tlb_helper.c cpu_helper.c vec_helper.c tcg-runtime-gvec.c serial.c serial_plus.c ${GDB_SOURCES} debug_cli.c cpu.c fifo.c checkpoint.c
+KERNEL_SOURCES := fpu_helper.c  host-utils.c  int128.c  interpreter.c  main.c plugin.c  softfloat.c  tlb_helper.c cpu_helper.c vec_helper.c tcg-runtime-gvec.c serial.c serial_plus.c ${GDB_SOURCES} debug_cli.c cpu.c fifo.c checkpoint.c
 KERNEL_OBJS := $(addprefix $(BUILD_DIR)/, $(patsubst %.c,%_kernel.o,$(KERNEL_SOURCES)))
 KERNEL_DEPS := $(KERNEL_OBJS:.o=.d)
 

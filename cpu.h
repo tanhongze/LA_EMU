@@ -9,13 +9,14 @@
 #define LOONGARCH_CPU_H
 
 #include "util.h"
+#include "qemu/osdep.h"
 #include "qemu/int128.h"
 #include "qemu/compiler.h"
 #include "hw/registerfields.h"
 #include "fpu/softfloat-types.h"
 #include "cpu-csr.h"
 
-#if defined(CONFIG_PLUGIN)
+#if CONFIG_PLUGIN
 #include "plugin.h"
 #endif
 #define LOONGARCH_CSR_MAXADDR 0x1000
@@ -513,6 +514,9 @@ typedef struct CPUArchState {
     int64_t timer_counter;
     timer_t timerid;
     volatile sig_atomic_t timer_int;
+#if CONFIG_PLUGIN >= 2
+    CPUPluginAction action;
+#endif
 } CPULoongArchState;
 
 typedef CPULoongArchState CPUArchState;
@@ -821,16 +825,19 @@ static inline bool enable_hw_ptw(CPULoongArchState* env) {
          FIELD_EX64(env->CSR_PWCH, CSR_PWCH, HPTW_EN));
 }
 
-#if defined(CONFIG_PLUGIN)
+#if CONFIG_PLUGIN
 extern la_emu_plugin_ops* plugin_ops;
 #endif
 
 
 static inline void laemu_exit(int64_t status) {
-#if defined (CONFIG_PLUGIN)
+#if CONFIG_PLUGIN
     if (plugin_ops && plugin_ops->emu_stop) {
         plugin_ops->emu_stop();
     }
+#endif
+#if CONFIG_PLUGIN >= 2
+    la_emu_plugin_action_stop();
 #endif
     exit(status);
 }

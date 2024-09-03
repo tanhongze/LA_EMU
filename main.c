@@ -27,14 +27,14 @@
 #include "serial.h"
 #include "serial_plus.h"
 #endif
-#if defined(CONFIG_PLUGIN)
+#if CONFIG_PLUGIN
 #include <dlfcn.h>
 #endif
 
-#if defined(CONFIG_PLUGIN)
+#if CONFIG_PLUGIN
 la_emu_plugin_ops* plugin_ops;
-char plugin_name[PATH_MAX];
-char plugin_arg[PATH_MAX];
+char plugin_name[PATH_MAX+1];
+char plugin_arg[PATH_MAX+1];
 #endif
 bool new_abi;
 bool determined;
@@ -678,6 +678,12 @@ void loongarch_cpu_set_irq(void *opaque, int irq, int level)
 static uint32_t fetch(CPULoongArchState *env, INSCache** ic) {
 #if defined(CONFIG_USER_ONLY)
         uint32_t insn = ram_lduw(env->pc);
+        #if CONFIG_PLUGIN >= 2
+            memset(&env->action, 0, sizeof(CPUPluginAction));
+            env->action.fetch.pc   = env->pc;
+            env->action.fetch.pa   = env->pc;
+            env->action.fetch.insn = insn;
+        #endif
         *ic = cpu_get_ic(env, insn);
         return insn;
 
@@ -700,6 +706,12 @@ static uint32_t fetch(CPULoongArchState *env, INSCache** ic) {
     }
     insn = ram_lduw(ha);
     *ic = cpu_get_ic(env, insn);
+#if CONFIG_PLUGIN >= 2
+    memset(&env->action, 0, sizeof(CPUPluginAction));
+    env->action.fetch.pc   = env->pc;
+    env->action.fetch.pa   = ha;
+    env->action.fetch.insn = insn;
+#endif
     return insn;
 #endif
 }
@@ -757,11 +769,14 @@ int exec_env(CPULoongArchState *env) {
                     }
                 }
                 insn = fetch(env, &ic);
-#ifdef CONFIG_DIFF
+#if defined(CONFIG_DIFF) || CONFIG_PLUGIN
                 env->insn = insn;
                 env->prev_pc = env->pc;
 #endif
-#if defined(CONFIG_PLUGIN)
+#if CONFIG_PLUGIN >= 2
+                la_emu_plugin_action_before(env);
+#endif
+#if CONFIG_PLUGIN
             if (plugin_ops && plugin_ops->emu_insn_before) {
                 plugin_ops->emu_insn_before(env, env->pc, insn);
             }
@@ -770,6 +785,14 @@ int exec_env(CPULoongArchState *env) {
                 if(unlikely(!r)) {
                     qemu_log("ill instruction, pc:%lx insn:%08x\n", env->pc, insn);
                 }
+#if CONFIG_PLUGIN >= 2
+                la_emu_plugin_action_after(env);
+#endif
+#if CONFIG_PLUGIN
+            if (plugin_ops && plugin_ops->emu_insn_after) {
+                plugin_ops->emu_insn_after(env);
+            }
+#endif
 
                 // need update after fetch and exec so exception would not cause singlestep and icount change
 #if defined (CONFIG_DIFF) || defined (CONFIG_CLI)
@@ -1085,7 +1108,7 @@ int main(int argc, char** argv, char **envp) {
                 serial_plus = 1;
                 break;
             case 'p':{
-#if defined(CONFIG_PLUGIN)
+#if CONFIG_PLUGIN
                 char * p = strchr(optarg, ',');
                 if (!p) {
                     strncpy(plugin_name, optarg, PATH_MAX);
@@ -1126,6 +1149,7 @@ int main(int argc, char** argv, char **envp) {
     //     fprintf(stderr, "%s\n", argv[i]);
     // }
 
+#ifndef CONFIG_USER_ONLY
     // check the combination of input workloads
     if (kernel_filename != NULL && (ckpt_mem_filename != NULL || ckpt_cpu_filename != NULL)) {
         fprintf(stderr, "cannot specify -k and --ckpt-mem/--ckpt-cpu at same time\n");
@@ -1142,7 +1166,6 @@ int main(int argc, char** argv, char **envp) {
         }
     }
 
-#ifndef CONFIG_USER_ONLY
     ram = alloc_ram(ram_size);
     qemu_log("pid:%d, ram_size:%lx kernel_filename:%s\n", getpid(), ram_size, kernel_filename);
 #endif
@@ -1170,7 +1193,7 @@ int main(int argc, char** argv, char **envp) {
         load_elf(kernel_filename, &entry_addr);
     }
 
-#if !defined (CONFIG_CLI) && !defined (CONFIG_PLUGIN)
+#if !defined (CONFIG_CLI) && !CONFIG_PLUGIN
     // set no echo
     struct termios term;
     tcgetattr(STDIN_FILENO, &term);
@@ -1317,7 +1340,10 @@ int main(int argc, char** argv, char **envp) {
     qemu_log_mask(CPU_LOG_PAGE, "init sp %lx\n", sp);
 #endif
     current_env = env;
-#if defined(CONFIG_PLUGIN)
+#if CONFIG_PLUGIN >= 2
+    la_emu_plugin_action_start();
+#endif
+#if CONFIG_PLUGIN
     if (plugin_name[0]) {
         void* plugin_handle = dlopen(plugin_name, RTLD_LAZY);
         if (!plugin_handle) {

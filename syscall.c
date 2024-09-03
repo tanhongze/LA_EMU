@@ -377,9 +377,6 @@ static abi_long do_syscall1(CPUArchState *cpu_env, int num, abi_long arg1,
             return get_errno(close(arg1));
         case TARGET_NR_pipe2:
             return get_errno(pipe2((void*)arg1, arg2));
-        case TARGET_NR_getdents64:
-            fprintf(stderr, "lxy: %s:%d %s warning TARGET_NR_getdents64\n", __FILE__,__LINE__,__func__);
-            return get_errno(getdents64(arg1, (void*)arg2, arg3));
         case TARGET_NR_lseek:
             return get_errno(lseek(arg1, arg2, arg3));
         case TARGET_NR_read:
